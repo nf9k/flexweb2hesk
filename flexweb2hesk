@@ -1,0 +1,109 @@
+#!/bin/bash
+
+############################################################
+# Flexweb to Hesk Transfer Script v0.9 Bill Atkinson, NF9K #
+############################################################
+
+#Variables
+TARGET_REC=$1
+TARGET_REC_DIR="$(find /home/k1iw/Flexweb/Userdata/IRCINC -name $TARGET_REC)"
+#EMAIL_ADDR=service-desk@ircinc.org
+EMAIL_ADDR=chairman@ircinc.org
+INPUT_FILE="$TARGET_REC_DIR/params.txt"
+
+#echo $1
+#echo $TARGET_REC
+#echo $TARGET_REC_DIR
+#echo $EMAIL_ADDR
+#echo $INPUT_FILE
+#exit 1
+
+
+
+# Check if file exists
+if [[ ! -f "$INPUT_FILE" ]]; then
+    echo "Error: File $INPUT_FILE not found!"
+    exit 1
+fi
+
+cd $TARGET_REC_DIR
+
+# Declare an associative array to store values
+declare -A values
+
+# Read and parse the file
+while IFS='=' read -r key value; do
+    # Remove leading/trailing whitespace
+    key=$(echo "$key" | xargs)
+    value=$(echo "$value" | sed 's/^"//;s/"$//') # Remove surrounding quotes
+    
+    # Store specific keys in the array
+    case "$key" in
+        "SYSTEM_ID"|"TX_PL"|"RX_PL"|"RDNOTES3"|"APP_TYPE"|"SYSTEM_TRUSTEE"|"SYSTEM_TRUSTEE_CALL"|"SYSTEM_TRUSTEE_EML"|"SYSTEM_TRUSTEE_EPH"|"SFP_OUTPUT"|"SFP_INPUT"|"SUBDIR"|"LOC_STREET"|"LOC_BUILDING"|"LOC_LATDISP"|"LOC_LNGDISP"|"ANT_HAAT"|"APPSTAT")
+        values["$key"]="$value"
+        ;;
+    esac
+done < "$INPUT_FILE"
+
+# Define the desired order
+order=("SUBDIR" "SYSTEM_ID" "SFP_OUTPUT" "TX_PL" "SFP_INPUT" "RX_PL" "RDNOTES2" "APP_TYPE" "SYSTEM_TRUSTEE_CALL" "SYSTEM_TRUSTEE" "SYSTEM_TRUSTEE_EML" "SYSTEM_TRUSTEE_EPH" "LOC_STREET" "LOC_BUILDING" "LOC_LATDISP" "LOC_LNGDISP" "ANT_HAAT" "APPSTAT")
+
+dms_convert() {
+    local decimal=$1
+    
+    # Get the absolute value for calculation
+    local abs=$(echo "$decimal" | awk '{print ($1 < 0) ? -$1 : $1}')
+    
+    # Calculate degrees
+    local degrees=$(echo "$abs" | awk -F. '{print $1}')
+    
+    # Calculate minutes
+    local minutes_float=$(echo "($abs - $degrees) * 60" | bc -l)
+    local minutes=$(echo "$minutes_float" | awk -F. '{print $1}')
+    
+    # Calculate seconds
+    local seconds=$(echo "($minutes_float - $minutes) * 60" | bc -l)
+    
+    # Determine direction
+    local direction=""
+    if (( $(echo "$decimal >= 0" | bc -l) )); then
+        direction=$2  # Pass 'N' or 'E' for positive values
+    else
+        direction=$3  # Pass 'S' or 'W' for negative values
+    fi
+    
+    # Format and output DMS
+    printf "%d°%d'%.2f\"%s\n" "$degrees" "$minutes" "$seconds" "$direction"
+}
+
+# Print values in the specified order
+    cat /usr/local/bin/flexweb2hesk.email.note.txt > /tmp/${values[SUBDIR]}.txt
+    echo "System Information" >> /tmp/${values[SUBDIR]}.txt
+    echo "----------------------------" >> /tmp/${values[SUBDIR]}.txt
+    echo "Flexweb Record: ${values[SUBDIR]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Transmitter Callsign: ${values[SYSTEM_ID]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Output Frequency: ${values[SFP_OUTPUT]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Output Tone: ${values[TX_PL]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Input Frequency: ${values[SFP_INPUT]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Input Tone: ${values[RX_PL]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Mode(s): ${values[RDNOTES2]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Record Type: ${values[APP_TYPE]}" >> /tmp/${values[SUBDIR]}.txt
+    echo >> /tmp/${values[SUBDIR]}.txt
+    echo "Trustee Information" >> /tmp/${values[SUBDIR]}.txt
+    echo "----------------------------" >> /tmp/${values[SUBDIR]}.txt
+    echo "Callsign: ${values[SYSTEM_TRUSTEE_CALL]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Name: ${values[SYSTEM_TRUSTEE]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Email: ${values[SYSTEM_TRUSTEE_EML]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Phone: ${values[SYSTEM_TRUSTEE_EPH]}" >> /tmp/${values[SUBDIR]}.txt
+    echo >> /tmp/${values[SUBDIR]}.txt
+    echo "Site Information" >> /tmp/${values[SUBDIR]}.txt
+    echo "----------------------------" >> /tmp/${values[SUBDIR]}.txt
+    echo "Address: ${values[LOC_STREET]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Building: ${values[LOC_BUILDING]}" >> /tmp/${values[SUBDIR]}.txt
+    echo "Coordinates: $(dms_convert "${values[LOC_LATDISP]}" N S) Latitude / -$(dms_convert "-${values[LOC_LNGDISP]}" E W) Longitude" >> /tmp/${values[SUBDIR]}.txt
+    echo "Antenna HAAT (ft): ${values[ANT_HAAT]}" >> /tmp/${values[SUBDIR]}.txt
+    echo >> /tmp/${values[SUBDIR]}.txt
+    echo >> /tmp/${values[SUBDIR]}.txt
+#    mutt -s "[FLEXWEB2HESK] - Record #${values[SUBDIR]} - Type ${values[APPSTAT]} - ${values[SYSTEM_ID]} - ${values[SFP_OUTPUT]}" $EMAIL_ADDR < /tmp/${values[SUBDIR]}.txt
+#    cat /tmp/${values[SUBDIR]}.txt | mailx -r "${values[SYSTEM_TRUSTEE_EML]}" -s "[FLEXWEB2HESK] - Record #${values[SUBDIR]} - Type ${values[APPSTAT]} - ${values[SYSTEM_ID]} - ${values[SFP_OUTPUT]}" $EMAIL_ADDR
+    cat /tmp/${values[SUBDIR]}.txt | heirloom-mailx -S from="IRC Automation <scripts@ircinc.org>" -S replyto="${values[SYSTEM_TRUSTEE]} <${values[SYSTEM_TRUSTEE_EML]}>" -s "[FLEXWEB2HESK] - Record #${values[SUBDIR]} - Type ${values[APPSTAT]} - ${values[SYSTEM_ID]} - ${values[SFP_OUTPUT]}" $EMAIL_ADDR
